@@ -230,6 +230,13 @@ class Cube(pi3d.Shape):
 		self.MFlg = True
 		super(Cube, self).draw()
 
+	def drawIfHit(self, f):
+		if self.t:
+			self.scale(1.05, 1.05, 1.05)
+			self.children[0] = self.so if f else self.wo
+			self.MFlg = True
+			super(Cube, self).draw()
+		
 class HalfCube(pi3d.Shape):
 	def __init__(self, camera=None, light=None, name='', w=1.0, h=1.0, d=1.0,
 		x=0.0, y=0.0, z=0.0,
@@ -288,6 +295,13 @@ class HalfCube(pi3d.Shape):
 		self.MFlg = True
 		super(HalfCube, self).draw()
 
+	def drawIfHit(self, f):
+		if self.t:
+			self.scale(1.05, 1.05, 1.05)
+			self.children[0] = self.so if f else self.wo
+			self.MFlg = True
+			super(HalfCube, self).draw()
+		
 class Pyramid(pi3d.Shape):
 	def __init__(self, camera=None, light=None, name='', w=1.0, h=1.0, d=1.0,
 		x=0.0, y=0.0, z=0.0,
@@ -339,6 +353,13 @@ class Pyramid(pi3d.Shape):
 		self.MFlg = True
 		super(Pyramid, self).draw()
 
+	def drawIfHit(self, f):
+		if self.t:
+			self.scale(1.05, 1.05, 1.05)
+			self.children[0] = self.so if f else self.wo
+			self.MFlg = True
+			super(Pyramid, self).draw()
+		
 class Bullet(pi3d.Shape):
 	def __init__(self, camera=None, light=None, name='', w=1.0, h=1.0, d=1.0,
 		x=0.0, y=0.0, z=0.0,

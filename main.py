@@ -163,6 +163,9 @@ while DISPLAY.loop_running() and not inputs.key_state('KEY_ESC'):
 		if objects[i] != tself:
 			objects[i].draw(False)	# wireframe
 	mwo.draw()				# draw stationary wireframe objects
+	for i in range(4, len(objects)):
+		objects[i].drawIfHit(False)
+		
 	camera.reset(lens0)
 	camera.rotateY(tself.a)
 	camera.rotateX(90)
@@ -170,6 +173,9 @@ while DISPLAY.loop_running() and not inputs.key_state('KEY_ESC'):
 	for i in range(0, 4):	# draw moving objects
 		if objects[i] != tself:
 			objects[i].draw(True)	# solid
+	objects[4].draw(True)
 	mso.draw()				# draw stationary solid objects
+	for i in range(4, len(objects)):
+		objects[i].drawIfHit(True)
 	
 DISPLAY.destroy()
