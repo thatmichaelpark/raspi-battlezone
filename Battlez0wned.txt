@@ -1,0 +1,1092 @@
+{{
+        Battlez0wned
+        by Michael Park
+        
+        Version 20071003
+
+        I, Michael Park, hereby place this file into the public domain.
+                 
+}}
+{        
+        2007-09-19 Proof of concept runs fast enough
+        2007-09-20 Stripping down graphics_drv to free up memory
+        2007-09-21 0001: tank demo (rotation controlled by gamepad) with radar mockup, crosshairs, background.
+        2007-09-21 Now to make it real.
+        2007-09-22 Draws tank and obstacles, radar and crosshair work, can drive tanks around.
+        2007-09-22 Reclaimed graphics driver assembly language DAT space for display buffer.
+                   Rudimentary collision detection, BLOCKED indicator.
+        2007-09-23 Bullets. Had to shift world coordinates (<< SHIFT) for finer movement resolution.
+                   Decided to make objects flash rather than worry about making explosions.
+                   Space is very tight. Shrunk screen size (16x11 tiles, 256x176 pixels).
+                   Background mountains.
+        2007-09-23/24 Tank drawing and object drawing in separate cogs running in parallel with backdrop drawing.
+                   Unfortunately, backdrop gets painted on top of tanks and objects.
+                   Changed to tank drawing and backdrop drawing in separate cogs. Backdrop drawing starts
+                   as soon as tank heading is determined. Tank drawing occurs concurrently with object drawing
+                   in the main cog.
+        2007-09-24/25 Scoring, title screen.
+        2007-09-25/26 Got HYDRA-Net working!
+                   Selectable steering mode.                            
+        2007-09-27 Volcano!
+        2007-09-29&30 Running at NWCGE in Portland.
+        2007-10-03 Minor fixes.
+        
+                   ToDo: Sound would be nice but there's no room.
+                   
+                   Should probably: Eliminate explicit "<< SHIFT"; reorder object wireframe coords; use constant();
+                   refactor drawing code (and everything else); improve collision/hit detection; smarter mountain drawing.
+        
+        World coordinates
+        - X-axis runs east-west (east is positive)
+        - Y-axis runs north-south (north is positive)
+        - Z-axis runs up-down (up is positive)
+        (Right hand rule)
+
+        Angles are mod 8192
+        Heading 0 is east; heading increases counter-clockwise (i.e. 2048 is north)
+
+        Screen coordinates
+        - (0,0) is center of screen
+        - X-axis: right is positive
+        - Y-axis: up is positive 
+         
+}      
+
+CON
+
+  SOLO = true   ' false for two-Hydra network.
+
+  _clkmode = xtal1 + pll8x
+  _xinfreq = 10_000_000 + 0000
+  _stack = 50  
+
+  x_tiles = 16
+  y_tiles = 11
+
+  paramcount = 14       
+
+  x_screen = x_tiles << 4
+  y_screen = y_tiles << 4
+
+  xOffset = x_screen / 2
+  yOffset = y_screen / 2
+
+VAR
+
+  long  tv_status     '0/1/2 = off/visible/invisible           read-only
+  long  tv_enable     '0/? = off/on                            write-only
+  long  tv_pins       '%ppmmm = pins                           write-only
+  long  tv_mode       '%ccinp = chroma,interlace,ntsc/pal,swap write-only
+  long  tv_screen     'pointer to screen (words)               write-only
+  long  tv_colors     'pointer to colors (longs)               write-only               
+  long  tv_hc         'horizontal cells                        write-only
+  long  tv_vc         'vertical cells                          write-only
+  long  tv_hx         'horizontal cell expansion               write-only
+  long  tv_vx         'vertical cell expansion                 write-only
+  long  tv_ho         'horizontal offset                       write-only
+  long  tv_vo         'vertical offset                         write-only
+  long  tv_broadcast  'broadcast frequency (Hz)                write-only
+  long  tv_auralcog   'aural fm cog                            write-only
+
+  word  screen[x_tiles * y_tiles]
+  long  colors[2]
+
+OBJ
+
+  tv    : "tv_drv_010.spin"
+  gr[3] : "graphics_drv_010bz"
+  pad   : "gamepad_drv_001"
+'''  snd:  "NS_sound_drv_052_11khz_16bit"
+'''  hss: "ym2413a_hss_v1"
+  
+DAT                           
+tvparams                long    0               'status
+                        long    1               'enable
+                        long    %011_0000       'pins
+                        long    %0000           'mode
+                        long    0               'screen
+                        long    0               'colors
+                        long    x_tiles         'hc
+                        long    y_tiles         'vc
+                        long    10              'hx
+                        long    1               'vx
+                        long    0               'ho
+                        long    0               'vo
+                        long    60_000_000'_xinfreq<<4  'broadcast
+                        long    0               'auralcog
+
+VAR
+long    bitmap_base, display_base
+
+CON
+COLORS0 = $7e_7c_7a_79
+COLORS1 = $7e_7c_38_79
+
+PUB start | i, dx, dy
+
+  pad.start                                             ' Start gamepad driver
+
+  'start tv
+  longmove(@tv_status, @tvparams, paramcount)
+  tv_screen := @screen
+  tv_colors := @colors
+  tv.start(@tv_status)
+
+  'init colors
+  colors[0] := $7a_7a_7a_7a                             ' Slightly brighter background so my cheap TV can sync up.
+  colors[1] := $7a_7a_7a_7a
+
+  repeat i from 0 to 2
+    gr[i].start
+    
+  bitmap_base := (gr[0].BufferAddress + 63) & !63       ' double-buffered
+  display_base := bitmap_base + constant(x_tiles * y_tiles * 64 )
+  'init tile screen
+  repeat dx from 0 to tv_hc - 1
+    repeat dy from 0 to tv_vc - 1
+      screen[dy * tv_hc + dx] := display_base >> 6 + dy + dx * tv_vc
+      if dy < 2
+        screen[dy * tv_hc + dx] += |< 10
+
+  repeat i from 0 to 2
+    gr[i].setup(x_tiles, y_tiles, xOffset, yOffset, bitmap_base)
+
+  colors[0] := COLORS0                                  ' Set normal palette.                            
+  colors[1] := COLORS1
+    
+  gr[0].clear
+  DrawRadar( 0, 0 )
+  DrawCrossHairs( 0, 0 )
+  gr[0].copy(display_base)
+
+  cognew( TankTask, @stack1 )
+  cognew( BackdropTask, @stack2 )
+
+                                ' Initialize HYDRA-Net
+  dira[RX_PIN] := 0             ' input
+  dira[TX_PIN] := 1             ' output
+  outa[TX_PIN] := 1
+
+  self := TryToBeMaster
+
+  steeringModes[0] := steeringModes[1] := 0
+  
+  repeat
+    Game
+
+CON     ' Object stuff (game objects are not to be confused with Spin OBJs!)
+
+OBJTYPE_TANK = 0
+OBJTYPE_CUBE = 1
+OBJTYPE_HALFCUBE = 2
+OBJTYPE_PYRAMID = 3
+OBJTYPE_BULLET = 4
+
+NOBJECTS = 16   ' 2 tanks, 2 bullets, the rest obstacles
+
+SHIFT   = 8
+
+VAR
+
+long    obj_xs[NOBJECTS]        ' world x-coordinate (24.8)
+long    obj_ys[NOBJECTS]        ' world y-coordinate (24.8)
+word    obj_hs[4]               ' heading (only tanks and bullets have headings)
+byte    obj_types[NOBJECTS]     ' type of object
+byte    obj_timers[NOBJECTS]    ' life timer:
+                                '   for tanks, -1 => alive, 0 => dead, +ve => time left in flashing mode 
+                                '   for bullets, 0 => inactive, non-0 => time left in flight
+                                '   for objects, 0 => non-flashing, non-0 => time left in flashing mode
+
+long    stack1[30]
+long    stack2[30]
+
+PRI Game | i
+
+  InitObjects
+  controls[self] := constant(pad#NES_LEFT|pad#NES_UP)
+  
+  repeat
+
+    gr[0].clear
+    Move
+    Draw
+    repeat i from 2 to 0
+      gr[0].colorwidth(i+1, i+1)
+      gr[0].textmode( 2, 2, 6, %01_11 )
+      gr[0].text( 0, 0, string("HYDRA") )
+      gr[0].textmode( 2, 2, 6, %01_10 )
+      gr[0].text( 0, 0, string("BATTLEZ0WNED") )
+
+    if self == 0
+      gr[0].colorwidth( 3, 0 )
+      gr[0].textmode( 1, 1, 6, %01_01 )
+      gr[0].text( 0, -60, string("PRESS START") )
+       
+    gr[0].copy( display_base )
+    gr[0].width( 0 )
+
+    if self == 0   
+      if pad.button( pad#NES0_START )
+        repeat while pad.button( pad#NES0_START )
+        Transceive( 1 )
+        quit
+      else
+        Transceive( 0 )
+    else        
+      if Transceive( 0 ) == 1
+        quit
+
+  if self == 0
+    rand := cnt
+    Transceive( rand )
+  else
+    rand := Transceive( 0 )
+         
+  scores[0] := scores[1] := 0
+  strScore[0] := strScore[2] := "0"
+  
+  repeat  
+
+    PlayRound
+    
+    gr[0].clear
+    gr[0].copy( display_base )      
+    repeat i from 2 to 0
+      gr[0].colorwidth(i+1, i+1)
+      gr[0].textmode( 2, 2, 6, %01_01 )
+      gr[0].text( 0, 0, @strScore )
+    gr[0].width( 0 )
+    gr[0].copy( display_base )      
+    if ( scores[0] => 5 or scores[1] => 5 ) and ( scores[0] <> scores[1] )
+      quit
+    waitcnt( clkfreq*2 + cnt )
+
+  gr[0].colorwidth( 3, 0 )
+  gr[0].textmode( 1, 1, 6, %01_01 )
+  if scores[self] > scores[self^1]
+    gr[0].text( 0, -40, string("YOU WIN") )
+  else
+    gr[0].text( 0, -40, string("GAME OVER") )
+  gr[0].copy( display_base )      
+
+  waitcnt( clkfreq*4 + cnt )
+   
+DAT
+
+strScore      byte      "0-0", 0
+strSteeringMode byte    "A",0
+  
+PRI PlayRound | over
+              
+  InitObjects
+  prevControls[0] := prevControls[1] := 0
+  
+  repeat                                                            
+    gr[0].clear
+
+    if SOLO
+      if pad.button( pad#NES_START )
+        controls[self^1] := pad.read
+      else
+        controls[self] := pad.read
+    else
+      controls[self] := pad.read
+      controls[self^1] := Transceive( controls[self] )
+    
+    Move
+    Draw
+    strSteeringMode := "A" + steeringModes[self]
+    gr[0].text( 60, yOffset-16, @strSteeringMode )
+
+    prevControls[0] := controls[0]
+    prevControls[1] := controls[1]
+      
+    obj_timers[2] := obj_timers[2] - 1 #> 0
+    obj_timers[3] := obj_timers[3] - 1 #> 0
+    
+    gr[0].copy(display_base)
+                                                         ' The round is over when
+    over := obj_timers[0] == 0 or obj_timers[1] == 0     ' Either tank is dead
+    over and= ~obj_timers[0] =< 0 and ~obj_timers[1] =< 0' But not if one is in the process of dying
+    over and= obj_timers[2] == 0 and obj_timers[3] == 0  ' And not if bullets are still in flight
+    
+  until over 
+
+VAR
+
+byte    self                    ' Either 0 or 1; the other machine's self is the complement of this.
+byte    controls[2]
+byte    prevControls[2]
+byte    scores[2]
+byte    steeringModes[2]
+
+CON
+
+FIELDSIZE = 6000
+
+PRI InitObjects | i, i1, i2, t
+
+  obj_xs[0] := randi( FIELDSIZE ) << SHIFT
+  obj_ys[0] := randi( FIELDSIZE ) << SHIFT
+  obj_hs[0] := randi( 8_192 )
+  obj_hs[0] := OBJTYPE_TANK
+  repeat
+    obj_xs[1] := randi( FIELDSIZE ) << SHIFT
+    obj_ys[1] := randi( FIELDSIZE ) << SHIFT
+    obj_hs[1] := randi( 8_192 )
+    obj_hs[1] := OBJTYPE_TANK
+  until not TooCrowded( 1, 3_000 )
+  
+  obj_timers[0] := obj_timers[1] := -1     
+
+  obj_types[2] := obj_types[3] := OBJTYPE_BULLET
+  obj_timers[2] := obj_timers[3] := 0     
+  
+  i1 := (NOBJECTS - 4) * 1 / 3 + 4  
+  i2 := (NOBJECTS - 4) * 2 / 3 + 4  
+
+  t := OBJTYPE_CUBE
+  repeat i from 4 to NOBJECTS-1
+    if i == i1 or i == i2
+      ++t                                               ' t steps through {OBJTYPE_CUBE, OBJTYPE_HALFCUBE, OBJTYPE_PYRAMID}.
+    obj_types[i] := t
+    repeat
+      obj_xs[i] := randi( FIELDSIZE ) << SHIFT
+      obj_ys[i] := randi( FIELDSIZE ) << SHIFT
+    until not TooCrowded( i, 1000 )
+    obj_timers[i] := 0
+
+PRI TooCrowded( n, dist ) | i                           ' Returns true if object[n] is within dist of any object[i], i < n.
+
+  repeat i from 0 to n-1
+    if i == 2 or i == 3                                 ' Skip the bullets.
+      next
+    if ||( obj_xs[i] - obj_xs[n] ) < dist << SHIFT and ||( obj_ys[i] - obj_ys[n] ) < dist << SHIFT
+      return true
+      
+  return false      
+
+CON
+
+TURNINC = 16
+BULLETLIFE = 60
+FLASHTIME = 40
+
+PRI Move | i, x, y, dx, dy, o, diff, d
+
+  repeat i from 0 to 1                                  ' Turn tanks.
+    if ~obj_timers[i] => 0
+      next
+    d := 0
+    if controls[i] & pad#NES_LEFT
+      d := TURNINC
+    if controls[i] & pad#NES_RIGHT
+      d := -TURNINC
+    if steeringModes[i]
+      if controls[i] & pad#NES_DOWN
+        d := -d
+    obj_hs[i] += d
+            
+  backdropTaskControl := 1
+  
+  repeat i from 0 to 1                                  ' Move tanks.
+    if ~obj_timers[i] => 0
+      next
+    dx := Cos( obj_hs[i] ) ~> 5
+    dy := Sin( obj_hs[i] ) ~> 5     
+    x := obj_xs[i] 
+    y := obj_ys[i]
+
+    diff := prevControls[i] ^ controls[i]
+    if controls[i] & pad#NES_UP
+      x += dx 
+      y += dy  
+    if controls[i] & pad#NES_DOWN
+      x -= dx 
+      y -= dy  
+    if controls[i] & constant(pad#NES_A | pad#NES_B) & diff
+      if (obj_timers[i+2] == 0) and (~obj_timers[i^1] == -1) ' Bullet not already in flight and other tank is still alive.
+        obj_xs[i+2] := obj_xs[i]
+        obj_ys[i+2] := obj_ys[i]
+        obj_hs[i+2] := obj_hs[i]
+        obj_timers[i+2] := BULLETLIFE
+    if controls[i] & pad#NES_SELECT & diff
+      steeringModes[i] ^= 1
+       
+    if Blocked( x, y, i )
+      if i == self
+        gr[0].textmode( 1, 1, 6, 0 )
+        gr[0].color(1)
+        gr[0].text( 8-xOffset, yOffset-16, string("BLOCKED") )
+    else
+      obj_xs[i] := x
+      obj_ys[i] := y
+
+  repeat i from 2 to 3                                  ' Move bullets.
+    if obj_timers[i] == 0
+      next
+    dx := Cos( obj_hs[i] ) ~> 5
+    dy := Sin( obj_hs[i] ) ~> 5
+    repeat 10
+      obj_xs[i] += dx
+      obj_ys[i] += dy
+      if (o := Hit(i)) => 0                             ' Bullet hit something?
+        if o < 2                                        ' Was it a tank?
+          if ~obj_timers[o] < 0                         ' Only the first hit on the tank counts.
+            obj_timers[i] := 0                          ' Turn off bullet.
+            obj_timers[o] := FLASHTIME                  ' Make tank flash.
+            ++scores[1^o]                               ' Keep score.
+            strScore[(1^o^self)<<1] := "0" + scores[1^o]//10 ' Update score display
+
+        else                                            ' All other objects:
+          obj_timers[i] := 0                            ' Turn off bullet.
+          obj_timers[o] := FLASHTIME                    ' Make object flash.
+        quit       
+
+PRI Blocked( x, y, o ) | i, r
+
+  repeat i from 0 to NOBJECTS-1
+    if i < 2
+      r := 200 << SHIFT
+    else
+      r := 150 << SHIFT
+      
+    if i == o or i == 2 or i == 3
+      next
+    if ||( obj_xs[i] - x ) > r
+      next
+    if ||( obj_ys[i] - y ) > r
+      next
+    return true
+
+  return false           
+
+PRI Hit( b ) | i, r, x, y
+                   
+  x := obj_xs[b]
+  y := obj_ys[b]
+
+  repeat i from 0 to NOBJECTS-1
+    if i == b-2
+      next
+      
+    if obj_types[i] == OBJTYPE_TANK
+      r := 35 << SHIFT
+    elseif obj_types[i] == OBJTYPE_BULLET or obj_types[i] == OBJTYPE_HALFCUBE 
+      next
+    elseif obj_types[i] == OBJTYPE_PYRAMID
+      r := 25 << SHIFT
+    else
+      r := 50 << SHIFT
+      
+    if ||( obj_xs[i] - x ) > r
+      next
+    if ||( obj_ys[i] - y ) > r
+      next
+    return i
+
+  return -1           
+
+CON     ' Tank wireframe data
+
+TANK_NPOINTS = 22
+TANK_NLINES = 37
+
+DAT
+tank_xs       byte   100,  100, -100, -100,  115, 115, -115, -115,   50,   50,  -90,  -90, -60, -60,  90,  90,   0,   0,  90,  90, -25, -25 
+tank_ys       byte   -50,   50,   50,  -50,  -65,  65,   65,  -65,  -30,   30,   30,  -30, -15,  15,  -5,   5,   5,  -5,  -5,   5,   5,  -5  
+tank_zs       byte     0,    0,    0,    0,   20,  20,   20,   20,   40,   40,   40,   40,  75,  75,  55,  55,  55,  55,  65,  65,  65,  65 
+
+tank_i0s      byte  0,  1,  2,  3,  4,  5,  6,  7,  0,  1,  2,  3,  8,  9, 10, 11,  8,  9, 10, 11, 12, 12, 12, 13, 13, 14, 15, 16, 17, 18, 19, 20, 21, 14, 15, 16, 17 
+tank_i1s      byte  1,  2,  3,  0,  5,  6,  7,  4,  4,  5,  6,  7,  9, 10, 11,  8,  4,  5,  6,  7, 13,  8, 11,  9, 10, 15, 16, 17, 14, 19, 20, 21, 18, 18, 19, 20, 21
+
+VAR
+long tank_rxs[TANK_NPOINTS]
+long tank_rys[TANK_NPOINTS]
+
+CON     ' Obstacle wireframe data
+
+OBST_NPOINTS = 13
+CUBE_NLINES = 12
+HALFCUBE_NLINES = 12
+PYRAMID_NLINES = 8
+
+DAT
+obst_xs       byte    50,   50,  -50,  -50,   50,   50,  -50,  -50,   50,   50,  -50,  -50,    0
+obst_ys       byte   -50,   50,   50,  -50,  -50,   50,   50,  -50,  -50,   50,   50,  -50,    0
+obst_zs       byte     0,    0,    0,    0,   55,   55,   55,   55,  120,  120,  120,  120,  120
+
+cube_i0s      byte  0,  1,  2,  3,  8,  9, 10, 11,  0,  1,  2,  3
+cube_i1s      word  1,  2,  3,  0,  9, 10, 11,  8,  8,  9, 10, 11
+
+halfcube_i0s  byte  0,  1,  2,  3,  4,  5,  6,  7,  0,  1,  2,  3
+halfcube_i1s  byte  1,  2,  3,  0,  5,  6,  7,  4,  4,  5,  6,  7
+
+pyramid_i0s   byte  0,  1,  2,  3,  0,  1,  2,  3
+pyramid_i1s   byte  1,  2,  3,  0, 12, 12, 12, 12
+
+VAR
+long    obst_rxs[OBST_NPOINTS]
+long    obst_rys[OBST_NPOINTS]
+
+long    xs[NOBJECTS]
+long    ys[NOBJECTS]
+
+long    xtemps1[TANK_NPOINTS]
+long    ytemps1[TANK_NPOINTS]
+long    ztemps1[TANK_NPOINTS]
+
+long    xtemps2[OBST_NPOINTS]
+long    ytemps2[OBST_NPOINTS]
+long    ztemps2[OBST_NPOINTS]
+
+CON     ' Bullet wireframe data
+
+BULLET_NPOINTS  = 5
+BULLET_NLINES   = 8
+
+DAT
+
+bullet_xs     byte      -10, -10, -10, -10, 10
+bullet_ys     byte        5,   5,  -5,  -5, 0
+bullet_zs     byte       55,  65,  65,  55, 60
+
+bullet_i0s    byte      0, 1, 2, 3, 4, 4, 4, 4
+bullet_i1s    byte      1, 2, 3, 0, 0, 1, 2, 3
+
+VAR
+long    bullet_rxs[BULLET_NPOINTS]
+long    bullet_rys[BULLET_NPOINTS]
+
+CON
+EYEHEIGHT       = 66
+
+VAR
+long    tankTaskControl
+long    backdropTaskControl
+
+PRI Draw | b
+
+  DrawObjects
+  DrawRadar( xs[self^1], ys[self^1] )
+  DrawCrosshairs( xs[self^1], ys[self^1] )
+
+  gr[0].textmode( 1, 1, 6, %10_00 )
+  gr[0].color( 1 )
+  gr[0].text( xOffset - 16, yOffset - 16, @strScore )
+  
+  if ~obj_timers[self] > 0
+    b := Randii(6) + 1
+    colors[0] := COLORS0 & $fffffff8 + b
+    colors[1] := COLORS1 & $fffffff8 + b
+    --obj_timers[self]
+    if ~obj_timers[self] == 0
+      colors[0] := COLORS0
+      colors[1] := COLORS1
+
+  repeat until tankTaskControl == 0 and backdropTaskControl == 0
+   
+VAR
+long    angle
+
+PRI DrawObjects | x0, y0, x, y, i, s, c   
+
+  x0 := obj_xs[self]
+  y0 := obj_ys[self]
+   
+  angle := 2048 - obj_hs[self]                          ' We want to rotate the world around self so that self points north (2048)
+  s := sin( angle ) ~> 8
+  c := cos( angle ) ~> 8
+   
+  repeat i from 0 to NOBJECTS-1
+    x := obj_xs[i] - x0
+    y := obj_ys[i] - y0
+    xs[i] := (c*x - s*y) ~> (8 + SHIFT)
+    ys[i] := (s*x + c*y) ~> (8 + SHIFT)
+
+
+  repeat until backdropTaskControl == 0                 ' Wait until backdrop finishes drawing. Wasting valuable time here,
+                                                        ' but this prevents the background-on-foreground drawing error.
+                                                        ' Plus, since the backdrop task had a head start, it shouldn't
+                                                        ' be too long a wait. I hope. Probably should do some actual timing...  
+  tankTaskControl := 1
+   
+  RotateObstacle( angle )
+  repeat i from 4 to NOBJECTS-1
+    DrawObstacle( i )
+   
+  repeat i from 2 to 3
+    RotateBullet( angle + obj_hs[i] )
+    DrawBullet( i )
+   
+PRI TankTask
+
+  repeat
+    repeat until tankTaskControl == 1
+    
+    RotateTank( angle + obj_hs[ self^1 ] )
+    DrawTank( self^1 )
+
+    tankTaskControl := 0
+    
+PRI DrawTank( t ) | i, i0, i1, w
+
+  if ys[t] =< 0 or ||xs[t] > ||ys[t]                    ' Cheap clipping.
+    return
+
+  if obj_timers[t] == 0
+    return
+   
+  if ~obj_timers[t] < 0
+    gr[1].color( 2 )
+  else
+    gr[1].color( Randii(4) )
+    if --obj_timers[t] == 0
+      return
+     
+  repeat i from 0 to TANK_NPOINTS-1                     ' Translate local rotated coords to self-centered coords.
+    xtemps1[i] := tank_rxs[i] + xs[t]
+    ytemps1[i] := tank_rys[i] + ys[t]
+    ztemps1[i] := tank_zs[i] - EYEHEIGHT                   
+  
+  repeat i from 0 to TANK_NPOINTS-1                     ' Perspectivize.
+    w := ytemps1[i]
+    xtemps1[i] := xtemps1[i] * 256 / w
+    ytemps1[i] := ztemps1[i] * 256 / w
+
+  repeat i from 0 to TANK_NLINES-1                      ' Draw.
+    i0 := tank_i0s[i]
+    i1 := tank_i1s[i]
+    gr[1].plot( xtemps1[i0], ytemps1[i0] )
+    gr[1].line( xtemps1[i1], ytemps1[i1] )
+
+PRI DrawObstacle( o ) | c
+
+  if ys[o] =< 0 or ||xs[o] > ||ys[o]                    ' Cheap clipping.    
+    return
+
+  if obj_timers[o] == 0
+    gr[0].color( 2 )
+  else
+    c := Randii(4)
+    if c == 1                                           ' Avoid color 1 because it shows up as red in the upper
+      c := 3                                            '  part of the screen and is distracting.
+    gr[0].color( c )
+    --obj_timers[o]
+     
+  case obj_types[o]
+    OBJTYPE_CUBE: DrawCube( o )
+    OBJTYPE_HALFCUBE: DrawHalfcube( o )
+    OBJTYPE_PYRAMID: DrawPyramid( o )
+
+PRI DrawCube( o ) | i, i0, i1, w
+
+  repeat i from 0 to 11                                 ' Translate local rotated coords to self-centered coords.
+    if i == 4
+      i := 8                                            ' Skip non-cube coords.
+    xtemps2[i] := obst_rxs[i] + xs[o]
+    ytemps2[i] := obst_rys[i] + ys[o]
+    ztemps2[i] := obst_zs[i] - EYEHEIGHT
+    w := ytemps2[i]                                      ' Perspectivize
+    xtemps2[i] := xtemps2[i] * 256 / w
+    ytemps2[i] := ztemps2[i] * 256 / w
+    
+  repeat i from 0 to CUBE_NLINES-1                      ' Draw.
+    i0 := cube_i0s[i]
+    i1 := cube_i1s[i]
+    gr[0].plot( xtemps2[i0], ytemps2[i0] )
+    gr[0].line( xtemps2[i1], ytemps2[i1] )
+
+PRI DrawHalfcube( o ) | i, i0, i1, w
+
+  repeat i from 0 to 7                                  ' Translate local rotated coords to self-centered coords.
+    xtemps2[i] := obst_rxs[i] + xs[o]
+    ytemps2[i] := obst_rys[i] + ys[o]
+    ztemps2[i] := obst_zs[i] - EYEHEIGHT
+    w := ytemps2[i]                                      ' Perspectivize
+    xtemps2[i] := xtemps2[i] * 256 / w
+    ytemps2[i] := ztemps2[i] * 256 / w
+    
+  repeat i from 0 to HALFCUBE_NLINES-1                  ' Draw.
+    i0 := halfcube_i0s[i]
+    i1 := halfcube_i1s[i]
+    gr[0].plot( xtemps2[i0], ytemps2[i0] )
+    gr[0].line( xtemps2[i1], ytemps2[i1] )
+
+
+PRI DrawPyramid( o ) | i, i0, i1, w
+
+  repeat i from 0 to 12                                 ' Translate local rotated coords to self-centered coords.
+    if i == 4
+      i := 12                                           ' Skip non-pyramid coords.
+    xtemps2[i] := obst_rxs[i] + xs[o]
+    ytemps2[i] := obst_rys[i] + ys[o]
+    ztemps2[i] := obst_zs[i] - EYEHEIGHT
+    w := ytemps2[i]                                      ' Perspectivize
+    xtemps2[i] := xtemps2[i] * 256 / w
+    ytemps2[i] := ztemps2[i] * 256 / w
+    
+  repeat i from 0 to PYRAMID_NLINES-1                   ' Draw.
+    i0 := pyramid_i0s[i]
+    i1 := pyramid_i1s[i]
+    gr[0].plot( xtemps2[i0], ytemps2[i0] )
+    gr[0].line( xtemps2[i1], ytemps2[i1] )
+
+PRI DrawBullet( b ) | i, i0, i1, w
+
+  if obj_timers[b] == 0
+    return
+
+  if ys[b] =< 0 or ||xs[b] > ||ys[b]                    ' Cheap clipping.
+    return
+
+  gr[0].color( 3 )
+      
+  repeat i from 0 to BULLET_NPOINTS-1                   ' Translate local rotated coords to self-centered coords.
+    xtemps2[i] := bullet_rxs[i] + xs[b]
+    ytemps2[i] := bullet_rys[i] + ys[b]
+    ztemps2[i] := bullet_zs[i] - EYEHEIGHT                   
+  
+  repeat i from 0 to BULLET_NPOINTS-1                   ' Perspectivize.
+    w := ytemps2[i]
+    xtemps2[i] := xtemps2[i] * 256 / w
+    ytemps2[i] := ztemps2[i] * 256 / w
+
+  repeat i from 0 to BULLET_NLINES-1                    ' Draw.
+    i0 := bullet_i0s[i]
+    i1 := bullet_i1s[i]
+    gr[0].plot( xtemps2[i0], ytemps2[i0] )
+    gr[0].line( xtemps2[i1], ytemps2[i1] )
+        
+PRI RotateTank( theta ) | i, s, c
+
+  s := sin( theta ) ~> 8
+  c := cos( theta ) ~> 8
+  
+  repeat i from 0 to TANK_NPOINTS-1
+    tank_rxs[i] := (c*~tank_xs[i] - s*~tank_ys[i]) ~> 8
+    tank_rys[i] := (s*~tank_xs[i] + c*~tank_ys[i]) ~> 8
+  
+PRI RotateObstacle( theta ) | i, s, c
+
+  s := sin( theta ) ~> 8
+  c := cos( theta ) ~> 8
+  
+  repeat i from 0 to 3
+    obst_rxs[i] := (c*~obst_xs[i] - s*~obst_ys[i]) ~> 8
+    obst_rys[i] := (s*~obst_xs[i] + c*~obst_ys[i]) ~> 8
+
+  repeat i from 4 to 11
+    obst_rxs[i] := obst_rxs[i-4]
+    obst_rys[i] := obst_rys[i-4]
+  
+PRI RotateBullet( theta ) | i, s, c
+
+  s := sin( theta ) ~> 8
+  c := cos( theta ) ~> 8
+  
+  repeat i from 0 to BULLET_NPOINTS-1
+    bullet_rxs[i] := (c*~bullet_xs[i] - s*~bullet_ys[i]) ~> 8
+    bullet_rys[i] := (s*~bullet_xs[i] + c*~bullet_ys[i]) ~> 8
+  
+PRI DrawCrosshairs( x, y ) | u
+
+  if y > 0 and ||x < (||y>>4 #> 50)    
+    gr[0].color( 3 )
+    u := 12
+  else
+    gr[0].color( 1 )
+    u := 20
+    
+  gr[0].plot( 0, 40 )
+  gr[0].line( 0, 20 )
+  gr[0].plot( 0, -40 )
+  gr[0].line( 0, -20 )
+  gr[0].plot( -20, 20 )
+  gr[0].line( 20, 20 )
+  gr[0].plot( -20, -20 )
+  gr[0].line( 20, -20 )
+  gr[0].plot( -20, 20 )
+  gr[0].line( -u, 12 )
+  gr[0].plot( 20, 20 )
+  gr[0].line( u, 12 ) 
+  gr[0].plot( -20, -20 )
+  gr[0].line( -u, -12 )
+  gr[0].plot( 20, -20 )
+  gr[0].line( u, -12 )
+
+PRI DrawRadar( x, y )
+
+  gr[0].color( 1 )
+  gr[0].plot( 0, yOffset-1 )
+  gr[0].line( 0, yOffset-3 )
+  gr[0].plot( 15, yOffset-16 )
+  gr[0].line( 13, yOffset-16 )
+  gr[0].plot( 0, yOffset-32 )
+  gr[0].line( 0, yOffset-30 )
+  gr[0].plot( -15, yOffset-16 )
+  gr[0].line( -13, yOffset-16 )
+         
+  gr[0].plot( 7, yOffset-4 )
+  gr[0].line( 0, yOffset-17 )
+  gr[0].plot( -1, yOffset-17 )
+  gr[0].line( -7, yOffset-4 )
+  x ~>= 9
+  if x < -13 or x > 13
+    return
+  y ~>= 9
+  if y < -13 or y > 13
+    return
+  gr[0].color( 3 )
+  gr[0].plot( x, y+yOffset-16 )
+
+PRI BackdropTask
+
+  repeat
+    repeat until backdropTaskControl == 1
+
+    DrawBackdrop( obj_hs[self] )
+    
+    backdropTaskControl := 0
+    
+PRI DrawBackdrop( theta ) | p, x, y, offset, xprev, xprevOnscreen, xOnscreen, i
+
+  offset := ( -theta & 8191 ) / 5 + xOffset
+  
+  gr[2].color( 1 )
+  gr[2].plot( -xOffset, 0 )
+  gr[2].line( xOffset, 0 )
+
+  p := @bkgd_pts
+  repeat 
+    x := word[p]
+    p += 2
+    if ~~x < 0
+      quit 
+    x -= offset
+    xOnscreen := -xOffset < x and x < xOffset
+    y := word[p]
+    p += 2
+    if ~~y < 0
+      gr[2].plot( x, -~~y )
+    else
+      if xOnscreen or xprevOnscreen
+        gr[2].line( x, y )
+      else        
+        gr[2].plot( x, y )
+    xprev := x
+    xprevOnscreen := xOnscreen
+
+  gr[2].color(3)
+  repeat i from 0 to 2
+    plume_dys[i]--
+    plume_ys[i] += plume_dys[i]
+    plume_xs[i] += plume_dxs[i]
+    if ~plume_ys[i] < -50-Randi(50)
+      plume_xs[i] := plume_ys[i] := 0
+      plume_dxs[i] := Randi(7)-3
+      plume_dys[i] := Randi(8)+9
+    gr[2].plot( 1275+(~plume_xs[i]~>3)-offset, 12+(~plume_ys[i]~>4) )      
+    
+DAT
+bkgd_pts      word      0, -1
+              word      30, 25
+              word      70, 1
+              word      85, 7
+              word      96, 15
+              word      120, 0
+              word      175, -1
+              word      220, 12
+              word      260, 0
+              
+              word      250, -4
+              word      280, 18
+              word      300, 9
+              word      319, 7
+              word      280, -18
+              word      350, 0
+              
+              word      362, -1
+              word      388, 9
+              word      383, -1
+              word      388, 9
+              word      404, 0
+              
+              word      450, -1
+              word      482, 8
+              word      517, 4
+              word      515, -1
+              word      529, 14
+              word      540, 17
+              word      566, 0
+
+              word      600, -1
+              word      607, 12
+              word      612, 9
+              word      620, 0
+
+              word      680, -1
+              word      720, 6
+              word      730, 16
+              word      735, 16
+              word      750, 8
+              word      780, 0
+              word      765, -5
+              word      787, 10
+              word      797, 4
+              word      790, -1
+              word      815, 12
+              word      840, 0
+
+              word      900, -1
+              word      920, 15
+              word      953, 0
+              word      920, -15
+              word      980, 0
+              word      1005, 18
+              word      1017, 7
+              word      1035, 23
+              word      1053, 0
+              word      1017, -7
+              word      1035, 0
+ 
+              word      1100, -1
+              word      1125, 13
+              word      1133, 6
+              word      1144, 11
+              word      1170, 5
+              word      1160, -1
+              word      1175, 8
+              word      1200, 8
+              word      1240, 0
+
+              word      1260, -1
+              word      1275, 12
+              word      1295, 0
+              
+              word      1320, -1
+              word      1340, 5
+              word      1337, -1
+              word      1350, 12
+              word      1370, 4
+              word      1366, -1
+              word      1385, 18
+              word      1400, 15
+              word      1425, 0      
+
+              word      1470, -1
+              word      1485, 15
+              word      1505, 7
+              word      1500, -1
+              word      1511, 14
+              word      1525, 18
+              word      1540, 0
+              word      1537, -4
+              word      1555, 8
+              word      1560, 4
+              word      1600, 0
+                            
+              word      1638+0, -1
+              word      1638+30, 25
+              word      1638+70, 1
+              word      1638+85, 7
+              word      1638+96, 15
+              word      1638+120, 0
+              word      1638+175, -1
+              word      1638+220, 12
+              word      1638+260, 0
+              word      1638+250, -4
+              word      1638+280, 18
+
+              word      -1              
+
+plume_xs      byte      0, 0, 0
+plume_ys      byte      0, 0, 0
+plume_dxs     byte     -3, 1, 2
+plume_dys     byte     10, 7, 15
+    
+VAR
+  long rand
+
+PRI Randi(n)
+  return (?rand & $7fffffff) // n
+
+' Use Randi for random #s common to both machines.
+' Use Randii for random #s that don't have to be synchronized (e.g. for flashing effects)
+
+VAR
+  long rand2
+
+PRI Randii(n)
+  return (?rand2 & $7fffffff) // n
+
+{
+PRI DistanceSquared( x0, y0, x1, y1 ) | dx, dy
+  dx := x1 - x0
+  dy := y1 - y0
+  return dx*dx + dy*dy
+  
+PRI Distance( x0, y0, x1, y1 )
+  return ^^DistanceSquared( x0, y0, x1, y1 )
+}
+PRI Sin( a ) ' [0..8191] -> 16-bit result
+  a &= $1fff
+  if a < 2048
+    return sinlookup( a )
+  elseif a < 4096
+    return sinlookup( 4096 - a )
+  elseif a < constant(2048+4096)
+    return -sinlookup( a - 4096 )
+  else
+    return -sinlookup( 8192 - a )
+
+PRI sinlookup( a ) | s
+  return word[$e000][a]
+
+PRI Cos( a )
+  return Sin( a + 2048 )
+
+CON     ' HYDRA-Net stuff
+
+TX_PIN  = 2
+RX_PIN  = 1
+DELAY   = 1
+
+PRI TryToBeMaster               ' Return 0 if master, 1 if slave.
+  if SOLO
+    return 0
+  outa[TX_PIN] := 0
+  repeat 100'DELAY
+  if ina[RX_PIN] == 0
+    outa[TX_PIN] := 1
+    repeat 100'DELAY
+    if ina[RX_PIN] == 1
+      return 0
+
+  repeat until ina[RX_PIN] == 0 ' OK, this isn't really reliable
+  outa[TX_PIN] := 0
+  repeat until ina[RX_PIN] == 1
+  outa[TX_PIN] := 1
+
+  return 1
+
+PRI Transceive( outgoing ) | incoming
+  if SOLO
+    return 0
+  if self == 0
+    outa[TX_PIN] := 0
+    repeat until ina[RX_PIN] == 0
+  else
+    repeat until ina[RX_PIN] == 0
+    outa[TX_PIN] := 0
+
+  repeat 32
+    outa[TX_PIN] := outgoing & 1
+    outgoing >>= 1
+    repeat DELAY
+    incoming >>= 1
+    incoming |= ina[RX_PIN] << 31
+    repeat DELAY
+  outa[TX_PIN] := 1
+  return incoming
+                     
