@@ -116,6 +116,21 @@ for i in range(5):
 	addToObjects(HalfCube(camera))
 	addToObjects(Pyramid(camera))
 
+mwo = pi3d.MergeShape(camera)	# merged wireframe objects
+mso = pi3d.MergeShape(camera)
+for i in range(4, len(objects)):
+	o = objects[i]
+	mwo.add(o.wo, x=o.x(), y=o.y())
+	mso.add(o.so, x=o.x(), y=o.y())
+mwo.set_material((0.0, 1.0, 0.0))
+mso.set_material((0.0, 0.0, 0.0))
+mwo.set_line_width(3.0, False)
+mwo.buf[0].draw_method = pi3d.GL_LINES
+shader = pi3d.Shader('mat_flat')
+mwo.set_draw_details(shader, [])
+mwo.set_fog((0, 0, 0, 1), 30000)
+mso.set_fog((0, 0, 0, 1), 30000)
+
 inputs = pi3d.InputEvents()
 v = 10
 bv = 10
@@ -144,14 +159,17 @@ while DISPLAY.loop_running() and not inputs.key_state('KEY_ESC'):
 	pi3d.opengles.glLineWidth(ctypes.c_float(3.0))
 	for o in objects:
 		o.tick()
-		if o != tself:
-			o.draw(False)	# wireframe
+	for i in range(0, 4):	# draw moving objects
+		if objects[i] != tself:
+			objects[i].draw(False)	# wireframe
+	mwo.draw()				# draw stationary wireframe objects
 	camera.reset(lens0)
 	camera.rotateY(tself.a)
 	camera.rotateX(90)
 	camera.position((tself.x(), tself.y(), -60.0))
-	for o in objects:
-		if o != tself:
-			o.draw(True)	# solid
+	for i in range(0, 4):	# draw moving objects
+		if objects[i] != tself:
+			objects[i].draw(True)	# solid
+	mso.draw()				# draw stationary solid objects
 	
 DISPLAY.destroy()
