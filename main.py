@@ -4,6 +4,16 @@ from background import Background
 import random
 from math import sin, cos, radians, hypot
 import ctypes
+import time
+
+v = 10
+bv = 10
+turninc = 1
+v_s = v * 60
+bv_s = bv * 60
+turninc_s = turninc * 60
+
+time0 = time.time()
 
 def Arrange(objects):
 	FIELDSIZE = 6000.0
@@ -63,9 +73,9 @@ def MoveTank(t, l, r, u, d, f, b):
 	x = t.x()
 	y = t.y()
 	if l:
-		t.a += 1
+		t.a += turninc
 	if r:
-		t.a -= 1
+		t.a -= turninc
 	if u:
 		t.positionX(x - v * sin(radians(t.a)))
 		t.positionY(y + v * cos(radians(t.a)))
@@ -132,10 +142,15 @@ mwo.set_fog((0, 0, 0, 1), 30000)
 mso.set_fog((0, 0, 0, 1), 30000)
 
 inputs = pi3d.InputEvents()
-v = 10
-bv = 10
 tself = tank0
 while DISPLAY.loop_running() and not inputs.key_state('KEY_ESC'):
+	time1 = time.time()
+	dt = time1 - time0
+	time0 = time1
+	v = v_s * dt
+	bv = bv_s * dt
+	turninc = turninc_s * dt
+	
 	inputs.do_input_events()
 	MoveTank(tself,
 		inputs.key_state("KEY_LEFT"),
