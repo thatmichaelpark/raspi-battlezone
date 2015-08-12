@@ -4,11 +4,11 @@ from random import uniform
 
 R = 10000.0
 STARTZ = -1200
-MINDX = -10.0
-MAXDX = 10.0
-MINDZ = -15.0
-MAXDZ = -5.0
-ACCEL = 0.2
+MINDX = -500.0
+MAXDX = 500.0
+MINDZ = -500.0
+MAXDZ = -150.0
+ACCEL = 200.0
 MINEND = -800
 MAXEND = 0
 
@@ -35,10 +35,10 @@ class GBOF(pi3d.Shape):
 		self.positionZ(STARTZ)
 		self.dx = uniform(MINDX, MAXDX)
 		self.dz = uniform(MINDZ, MAXDZ)
-	def tick(self):
-		self.translateX(self.dx)
-		self.translateZ(self.dz)
-		self.dz += ACCEL
+	def tick(self, dt):
+		self.translateX(self.dx * dt)
+		self.translateZ(self.dz * dt)
+		self.dz += ACCEL * dt
 		if self.z() > uniform(MINEND, MAXEND):
 			self.positionX(0.0)
 			self.positionZ(STARTZ)
@@ -117,9 +117,9 @@ class Background(pi3d.Shape):
 			self.gbofs.append(b)
 			self.add_child(b)
 
-	def tick(self):
+	def tick(self, dt):
 		for gbof in self.gbofs:
-			gbof.tick()
+			gbof.tick(dt)
 			
 if __name__ == '__main__':
 	DISPLAY = pi3d.Display.create(near=1.0, far=11000.0, samples=4)

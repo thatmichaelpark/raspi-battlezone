@@ -1,6 +1,6 @@
 import pi3d
 from random import random
-FLASHTIME = 25
+FLASHTIME = 0.5 # in seconds
 	
 class WireObject(pi3d.Shape):
 	def __init__(self, verts, ends, camera=None, light=None, name='', w=1.0, h=1.0, d=1.0, t2=0.1,
@@ -151,11 +151,12 @@ class Tank(pi3d.Shape):
 		self.t = 0	# -1 => dead; 0 => alive; +ve => flashing
 		self.a = 0.0
 		
-	def tick(self):
+	def tick(self, dt):
 		if self.t > 0:
 			self.so.set_material((random(), random(), random()))
-			self.t -= 1
-			if self.t == 0:
+			self.t -= dt
+			if self.t <= 0:
+				self.t = 0
 				self.so.set_material((0.0, 0.0, 0.0))
 
 	def hitTest(self, x, y):
@@ -211,11 +212,12 @@ class Cube(pi3d.Shape):
 
 		self.t = 0	# 0 => normal; +ve => flashing
 		
-	def tick(self):
+	def tick(self, dt):
 		if self.t > 0:
 			self.so.set_material((random(), random(), random()))
-			self.t -= 1
-			if self.t == 0:
+			self.t -= dt
+			if self.t <= 0:
+				self.t = 0
 				self.so.set_material((0.0, 0.0, 0.0))
 
 	def hitTest(self, x, y):
@@ -277,11 +279,12 @@ class HalfCube(pi3d.Shape):
 
 		self.t = 0	# 0 => normal; +ve => flashing
 		
-	def tick(self):
+	def tick(self, dt):
 		if self.t > 0:
 			self.so.set_material((random(), random(), random()))
-			self.t -= 1
-			if self.t == 0:
+			self.t -= dt
+			if self.t <= 0:
+				self.t = 0
 				self.so.set_material((0.0, 0.0, 0.0))
 
 	def hitTest(self, x, y):
@@ -334,11 +337,12 @@ class Pyramid(pi3d.Shape):
 
 		self.t = 0	# 0 => normal; +ve => flashing
 		
-	def tick(self):
+	def tick(self, dt):
 		if self.t > 0:
 			self.so.set_material((random(), random(), random()))
-			self.t -= 1
-			if self.t == 0:
+			self.t -= dt
+			if self.t <= 0:
+				self.t = 0
 				self.so.set_material((0.0, 0.0, 0.0))
 
 	def hitTest(self, x, y):
@@ -394,9 +398,11 @@ class Bullet(pi3d.Shape):
 		self.t = 0	# 0 => dead; +ve => in flight
 		self.a = 0.0
 		
-	def tick(self):
+	def tick(self, dt):
 		if self.t > 0:
-			self.t -= 1
+			self.t -= dt
+			if self.t <= 0:
+				self.t = 0
 
 	def hitTest(self, x, y):
 		return False

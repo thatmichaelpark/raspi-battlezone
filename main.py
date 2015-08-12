@@ -6,9 +6,13 @@ from math import sin, cos, radians, hypot
 import ctypes
 import time
 
-v = 10
-bv = 10
-turninc = 1
+BULLETTIME = 2.0 # seconds
+RELOADTIME = 3.0 # seconds
+# todo: implement reload time
+
+v = 5
+bv = 5
+turninc = .5
 v_s = v * 60
 bv_s = bv * 60
 turninc_s = turninc * 60
@@ -88,7 +92,7 @@ def MoveTank(t, l, r, u, d, f, b):
 			t.positionY(y)
 	if f:
 		if b.t == 0:
-			b.t = 50
+			b.t = BULLETTIME
 			b.dx = bv * -sin(radians(t.a))
 			b.dy = bv * cos(radians(t.a))
 			b.positionX(t.x())
@@ -169,11 +173,11 @@ while DISPLAY.loop_running() and not inputs.key_state('KEY_ESC'):
 	pi3d.opengles.glLineWidth(ctypes.c_float(2.0))
 	bkgd.positionX(tself.x())
 	bkgd.positionY(tself.y())
-	bkgd.tick()
+	bkgd.tick(dt)
 	bkgd.draw()
 	pi3d.opengles.glLineWidth(ctypes.c_float(3.0))
 	for o in objects:
-		o.tick()
+		o.tick(dt)
 	for i in range(0, 4):	# draw moving objects
 		if objects[i] != tself:
 			objects[i].draw(False)	# wireframe
