@@ -8,7 +8,6 @@ import time
 
 BULLETTIME = 2.0 # seconds
 RELOADTIME = 3.0 # seconds
-# todo: implement reload time
 
 v = 5
 bv = 5
@@ -91,7 +90,8 @@ def MoveTank(t, l, r, u, d, f, b):
 			t.positionX(x)
 			t.positionY(y)
 	if f:
-		if b.t == 0:
+		if t.reloadtime == 0:
+			t.reloadtime = RELOADTIME
 			b.t = BULLETTIME
 			b.dx = bv * -sin(radians(t.a))
 			b.dy = bv * cos(radians(t.a))

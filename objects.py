@@ -150,6 +150,7 @@ class Tank(pi3d.Shape):
 
 		self.t = 0	# -1 => dead; 0 => alive; +ve => flashing
 		self.a = 0.0
+		self.reloadtime = 0 # 0 => can fire; +ve => reloading/can't fire
 		
 	def tick(self, dt):
 		if self.t > 0:
@@ -158,6 +159,10 @@ class Tank(pi3d.Shape):
 			if self.t <= 0:
 				self.t = 0
 				self.so.set_material((0.0, 0.0, 0.0))
+		if self.reloadtime > 0:
+			self.reloadtime -= dt
+			if self.reloadtime <= 0:
+				self.reloadtime = 0
 
 	def hitTest(self, x, y):
 		r = 35
